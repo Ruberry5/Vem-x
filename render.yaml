@@ -2,7 +2,7 @@ services:
   - type: web
     name: vem-x-realtime
     runtime: node
-    rootDir: server
+    rootDir: .
     buildCommand: npm install
     startCommand: npm start
     healthCheckPath: /health
