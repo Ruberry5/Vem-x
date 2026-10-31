@@ -32,18 +32,24 @@ function tick(r){if(!rooms.has(r.code))return;const t=now();if(!r.deadline||t<r.
    const landed=[...r.players.values()].filter(p=>p.connected&&p.landed);
    for(const p of r.players.values())if(!p.landed){p.alive=false;addFeed(r,`${p.nickname} missed the drop`);}
    if(landed.length===0){endMatch(r,null);return;}
-   r.phase='survive';r.deadline=t+18000;r.zone={min:2,max:5,closesAt:t+18000};r.message='The safe zone is closing — move into the center';addFeed(r,'SAFE ZONE CLOSING');broadcast(r);return;
+   r.phase='survive';r.zoneStage=0;r.zone={min:1,max:6,closesAt:t+12000};r.deadline=t+12000;r.message='The safe zone is shrinking';addFeed(r,'SAFE ZONE CLOSING — 6 × 6');broadcast(r);return;
  }
  if(r.phase==='survive'){
    const alive=[...r.players.values()].filter(p=>p.alive);
-   for(const p of alive){const {x,y}=p.tile||{x:-1,y:-1};if(x<r.zone.min||x>r.zone.max||y<r.zone.min||y>r.zone.max){p.alive=false;addFeed(r,`${p.nickname} was caught outside the zone`);}}
+   for(const p of alive){const {x,y}=p.tile||{x:-1,y:-1};if(x<r.zone.min||x>r.zone.max||y<r.zone.min||y>r.zone.max){p.alive=false;addFeed(r,p.nickname+' was caught outside the zone');}}
    const survivors=[...r.players.values()].filter(p=>p.alive);
    if(survivors.length===1){endMatch(r,survivors[0].id);return;}
    if(survivors.length===0){endMatch(r,null);return;}
-   // V1 tie-break: if multiple players fit inside the single closing zone, nearest to its centre wins.
-   survivors.sort((a,b)=>{const d=p=>Math.abs(p.tile.x-3.5)+Math.abs(p.tile.y-3.5);return d(a)-d(b)||a.joinedAt-b.joinedAt;});
-   endMatch(r,survivors[0].id);return;
+   if((r.zoneStage||0)<2){
+     r.zoneStage=(r.zoneStage||0)+1;
+     const bounds=[{min:2,max:5},{min:3,max:4}][r.zoneStage-1];
+     r.zone={...bounds,closesAt:t+12000};r.deadline=t+12000;
+     addFeed(r,'SAFE ZONE CLOSING — '+(r.zoneStage===1?'4 × 4':'2 × 2'));
+     r.message='Move into the next safe zone';broadcast(r);return;
+   }
+   r.phase='showdown';r.deadline=t+5000;r.showdownTaps=new Map();r.message='FINAL SHOWDOWN — tap to survive';addFeed(r,'5-SECOND FINAL TAP SHOWDOWN');broadcast(r);return;
  }
+ if(r.phase==='showdown'){const contenders=[...r.players.values()].filter(p=>p.alive);const taps=r.showdownTaps||new Map();const top=Math.max(0,...contenders.map(p=>taps.get(p.id)||0));const leaders=contenders.filter(p=>(taps.get(p.id)||0)===top);if(leaders.length===1&&top>0){endMatch(r,leaders[0].id);}else{endMatch(r,null);}return;}
  if(r.phase==='winner'){clearInterval(r.timer);r.timer=null;}
 }
 function leaveRoom(socket){const code=socket.data.roomCode,id=socket.data.playerId;if(!code||!rooms.has(code))return;const r=rooms.get(code),p=r.players.get(id);if(!p)return;p.connected=false;p.socketId=null;addFeed(r,`${p.nickname} disconnected`);if(r.hostId===id){setHost(r);addFeed(r,'A new host has been assigned');}broadcast(r);if([...r.players.values()].every(x=>!x.connected)&&r.phase==='lobby'){setTimeout(()=>{if(rooms.get(code)===r&&[...r.players.values()].every(x=>!x.connected)){rooms.delete(code);}},60000);}}
@@ -61,8 +67,9 @@ io.on('connection',socket=>{
   attachPlayer(socket,r,p);if(!p.crew)p.crew=crew;addFeed(r,`${p.nickname} joined the room`);broadcast(r);cb({ok:true,token:p.id,code:c,state:roomSnapshot(r)});
  });
  socket.on('startMatch',(_payload,cb=()=>{})=>{const r=rooms.get(socket.data.roomCode);if(!r)return cb({ok:false,error:'Room expired.'});if(socket.data.playerId!==r.hostId)return cb({ok:false,error:'Only the host can start.'});if(!startMatch(r))return cb({ok:false,error:'At least two players are required.'});cb({ok:true});});
- socket.on('land',({x,y},cb=()=>{})=>{const r=rooms.get(socket.data.roomCode),p=r?.players.get(socket.data.playerId);if(!r||!p)return cb({ok:false,error:'Room connection lost.'});if(r.phase!=='drop')return cb({ok:false,error:'The drop phase has ended.'});if(!p.alive)return cb({ok:false,error:'You joined after the drop began. Spectate until the next match.'});if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>7||y<0||y>7)return cb({ok:false,error:'Choose a valid tile.'});if(p.landed)return cb({ok:false,error:'You have already landed.'});p.tile={x,y};p.landed=true;addFeed(r,`${p.nickname} landed`);broadcast(r);cb({ok:true});});
- socket.on('move',({x,y},cb=()=>{})=>{const r=rooms.get(socket.data.roomCode),p=r?.players.get(socket.data.playerId);if(!r||!p)return cb({ok:false,error:'Room connection lost.'});if(r.phase!=='survive'||!p.alive||!p.tile)return cb({ok:false,error:'You cannot move right now.'});if(Math.abs(x-p.tile.x)+Math.abs(y-p.tile.y)!==1)return cb({ok:false,error:'Move one adjacent tile at a time.'});if(x<0||x>7||y<0||y>7)return cb({ok:false,error:'That tile is outside the map.'});p.tile={x,y};broadcast(r);cb({ok:true});});
+ socket.on('land',({x,y},cb=()=>{})=>{const r=rooms.get(socket.data.roomCode),p=r?.players.get(socket.data.playerId);if(!r||!p)return cb({ok:false,error:'Room connection lost.'});if(r.phase!=='drop')return cb({ok:false,error:'The drop phase has ended.'});if(!p.alive)return cb({ok:false,error:'You joined after the drop began. Spectate until the next match.'});if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>7||y<0||y>7)return cb({ok:false,error:'Choose a valid tile.'});if(p.landed)return cb({ok:false,error:'You have already landed.'});if([...r.players.values()].some(q=>q.alive&&q.landed&&q.tile?.x===x&&q.tile?.y===y))return cb({ok:false,error:'That tile is occupied. Choose another tile.'});p.tile={x,y};p.landed=true;addFeed(r,`${p.nickname} landed`);broadcast(r);cb({ok:true});});
+ socket.on('move',({x,y},cb=()=>{})=>{const r=rooms.get(socket.data.roomCode),p=r?.players.get(socket.data.playerId);if(!r||!p)return cb({ok:false,error:'Room connection lost.'});if(r.phase!=='survive'||!p.alive||!p.tile)return cb({ok:false,error:'You cannot move right now.'});if(Math.abs(x-p.tile.x)+Math.abs(y-p.tile.y)!==1)return cb({ok:false,error:'Move one adjacent tile at a time.'});if(!Number.isInteger(x)||!Number.isInteger(y)||x<0||x>7||y<0||y>7)return cb({ok:false,error:'That tile is outside the map.'});if([...r.players.values()].some(q=>q.id!==p.id&&q.alive&&q.tile?.x===x&&q.tile?.y===y))return cb({ok:false,error:'That tile is occupied. Choose another tile.'});if(now()-(p.lastMoveAt||0)<400)return cb({ok:false,error:'Wait a moment before moving again.'});p.lastMoveAt=now();p.tile={x,y};broadcast(r);cb({ok:true});});
+ socket.on('showdownTap',(_payload,cb=()=>{})=>{const r=rooms.get(socket.data.roomCode),p=r?.players.get(socket.data.playerId);if(!r||!p)return cb({ok:false,error:'Room connection lost.'});if(r.phase!=='showdown'||!p.alive)return cb({ok:false,error:'The final showdown is not active.'});r.showdownTaps.set(p.id,(r.showdownTaps.get(p.id)||0)+1);broadcast(r);cb({ok:true});});
  socket.on('leaveRoom',()=>{const code=socket.data.roomCode,id=socket.data.playerId,r=rooms.get(code);if(r&&id&&r.players.has(id)){const p=r.players.get(id);r.players.delete(id);addFeed(r,`${p.nickname} left the room`);if(r.hostId===id){setHost(r);addFeed(r,'A new host has been assigned');}if(r.players.size===0){clearInterval(r.timer);rooms.delete(code);}else broadcast(r);}socket.leave(code||'');socket.data.roomCode=null;socket.data.playerId=null;});
  socket.on('playAgain',(_payload,cb=()=>{})=>{const r=rooms.get(socket.data.roomCode);if(!r)return cb({ok:false,error:'Room expired.'});if(socket.data.playerId!==r.hostId)return cb({ok:false,error:'Only the host can restart.'});if(r.phase!=='winner')return cb({ok:false,error:'The current match is still running.'});r.phase='lobby';r.winnerId=null;r.deadline=null;r.zone={min:0,max:7};r.players.forEach(p=>{p.alive=true;p.landed=false;p.tile=null;});r.feed=[];r.message='Waiting for your crew';broadcast(r);cb({ok:true});});
  socket.on('disconnect',()=>leaveRoom(socket));
