@@ -1,3 +1,29 @@
 {
-  "name":"vem-x","private":true,"version":"1.0.0","workspaces":["client","server"],"scripts":{"dev":"concurrently \"npm run dev -w server\" \"npm run dev -w client\"","build":"npm run build -w client","start":"npm run start -w server","test:server":"npm run test -w server"},"devDependencies":{"concurrently":"^9.1.2"}
+  "name": "vem-x",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently \"node --watch index.js\" \"vite --host 0.0.0.0\"",
+    "dev:client": "vite --host 0.0.0.0",
+    "dev:server": "node --watch index.js",
+    "build": "vite build",
+    "start": "node index.js",
+    "test:server": "node --test"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
+    "lucide-react": "^0.468.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "vite": "^6.0.7"
+  }
 }
